@@ -81,7 +81,7 @@
   .row2{display:flex;gap:12px;flex-wrap:wrap}
   .tooltip{position:fixed;background:#05121b;border:1px solid var(--accent);border-radius:8px;padding:8px 11px;font-size:12px;z-index:99;pointer-events:none;max-width:280px;display:none;box-shadow:0 6px 24px rgba(0,0,0,.5)}
   .pill{display:inline-block;padding:2px 8px;border-radius:20px;font-size:11px;font-weight:700}
-  .pill.PAUTADA{background:#3a2130;color:#e05260} .pill.RESERVADA{background:#3a3121;color:#d9a441} .pill.DISPONIBLE{background:#213a2a;color:#28c76f}
+  .pill.PAUTADA{background:#3a2130;color:#e05260} .pill.RESERVADA{background:#3a3121;color:#d9a441} .pill.DISPONIBLE{background:#213a2a;color:#28c76f} .pill.CONFIRMADA{background:#1e2f45;color:#3a8ee0}
   .hidden{display:none}
   .bar{display:flex;align-items:center;gap:10px;margin:7px 0;font-size:12px}
   .bar .lbl{width:150px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
@@ -215,10 +215,10 @@
     <h3>Capturar nueva pauta</h3>
     <div class="row2">
       <div class="field"><label>Campaña</label><input type="text" id="cCamp" placeholder="Nombre de campaña"></div>
-      <div class="field"><label>Negociación</label><select id="cNeg"><option>VENTA</option><option>BONIFICACIÓN</option><option>INTERCAMBIO</option></select></div>
+      <div class="field"><label>Negociación</label><select id="cNeg"><option value="">—</option><option>VENTA</option><option>BONIFICACIÓN</option><option>INTERCAMBIO</option></select></div>
       <div class="field"><label>Sitio</label><select id="cSitio"></select></div>
       <div class="field"><label>Slot</label><select id="cSlot"></select></div>
-      <div class="field"><label>Estatus</label><select id="cEst"><option>RESERVADA</option><option>PAUTADA</option></select></div>
+      <div class="field"><label>Estatus</label><select id="cEst"><option value="">—</option><option>RESERVADA</option><option>CONFIRMADA</option></select></div>
     </div>
     <label class="toggle" style="margin-top:10px"><input type="checkbox" id="cShowExtra"> Habilitar slots 9–12 <span class="muted small">(uso extraordinario; el estándar son 8)</span></label>
     <div class="row2" style="margin-top:10px">
@@ -244,7 +244,7 @@
       <button class="ghost" id="cSave">💾 Guardar y ver en Campañas</button>
       <span id="cMsg" class="muted small"></span>
     </div>
-    <p class="muted small" style="margin-top:8px">Estatus <b>RESERVADA</b>: se guarda con un contador de <b>3 días hábiles (72 h laborales)</b>. Si vence sin confirmarse, pasa automáticamente a <b>DISPONIBLE</b>. El registro y la edición viven en la pestaña <b>Campañas</b>.</p>
+    <p class="muted small" style="margin-top:8px">Estatus <b>RESERVADA</b>: se guarda con un contador de <b>72 horas</b> corridas. Si vence sin confirmarse, pasa automáticamente a <b>DISPONIBLE</b>. El registro y la edición viven en la pestaña <b>Campañas</b>.</p>
   </div>
 </div>
 
@@ -253,12 +253,10 @@
   <div class="card">
     <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:8px">
       <h3 style="margin:0">Campañas capturadas <span class="muted small" style="font-weight:400">(guardadas en este navegador)</span></h3>
-      <div style="flex:1"></div>
-      <button class="ghost small" id="clearCapBtn">🗑 Vaciar mis capturas</button>
     </div>
     <div class="row2" style="margin-bottom:10px">
       <div class="field" style="flex:1;min-width:220px"><label>Buscar (campaña o sitio)</label><input type="text" id="campSearch" placeholder="Ej. TELCEL, COL_414…"></div>
-      <div class="field"><label>Estatus</label><select id="campEstFilter"><option value="">Todos</option><option>RESERVADA</option><option>PAUTADA</option><option>DISPONIBLE</option></select></div>
+      <div class="field"><label>Estatus</label><select id="campEstFilter"><option value="">Todos</option><option>RESERVADA</option><option>CONFIRMADA</option><option>PAUTADA</option><option>DISPONIBLE</option></select></div>
       <label class="toggle" style="align-self:flex-end;padding-bottom:8px"><input type="checkbox" id="campOnlyCap"> Solo mis capturas</label>
     </div>
     <div class="matrix-scroll" style="max-height:420px" id="campanasBox"></div>
@@ -288,6 +286,7 @@
         <button class="ghost small" id="eClear">Limpiar</button>
       </div>
       <div class="hrgrid" id="eHrs"></div>
+      <p class="small" id="eAvailHint" style="margin-top:8px"></p>
     </div>
     <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
       <button id="eSave">💾 Guardar cambios</button>
@@ -356,6 +355,8 @@ function occupiedHours(sitio, slot, date, filt={}){
     if(filt.neg && rec.negociacion!==filt.neg) continue;
     if(filt.est && rec.estatus!==filt.est) continue;
     if(filt.hideConv && String(rec.tipoPauta||"").toUpperCase()==="CONVENCIONAL") continue;
+    if(filt.onlyConv && String(rec.tipoPauta||"").toUpperCase()!=="CONVENCIONAL") continue;
+    if(filt.exclKey){ const rk=rec._cap?("cap:"+rec.id):("base:"+rec.bid); if(rk===filt.exclKey) continue; }
     if(!recActiveOn(rec,date)) continue;
     for(const h of (rec.horas||[])) if(!occ[h]||(occ[h].tipoPauta==="CONVENCIONAL"&&rec.tipoPauta!=="CONVENCIONAL")) occ[h]=rec;
   }
@@ -434,8 +435,10 @@ function refreshSelectors(){
   sites.forEach(v=>{const lbl=document.createElement("label");
     lbl.innerHTML=`<input type="checkbox" value="${v.replace(/"/g,"&quot;")}" ${marcados.has(v)?"checked":""}> ${v}`;
     rBox.appendChild(lbl);});
-  const cS=document.getElementById("cSitio"); cS.innerHTML="";
+  const cS=document.getElementById("cSitio"); const prevSitio=cS.value; cS.innerHTML="";
+  const cSempty=document.createElement("option");cSempty.value="";cSempty.textContent="— elige sitio —";cS.appendChild(cSempty);
   sites.forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;cS.appendChild(o);});
+  cS.value = sites.includes(prevSitio)? prevSitio : "";
   updateCaptureSlots();
   const base = DATA.mes? new Date(DATA.mes+"-01T00:00:00") : today();
   const iso=fmt(base);
@@ -559,6 +562,8 @@ function renderMatrix(){
   let body="<tbody>", totalCells=0,busyCells=0,freeSlots=0,rows=0;
   for(const sitio of sites){
     for(const slot of slotsForSite(sitio).filter(s=>showExtra||s<=8)){
+      // Al ocultar convencionales, esconder por completo las filas cuyo slot tiene una convencional/anual
+      if(filt.hideConv && Object.keys(occRange(sitio,slot,a,b,{onlyConv:true})).length) continue;
       const occ=occRange(sitio,slot,a,b,filt);
       const nBusy=Object.keys(occ).length;
       if(onlyFree && nBusy>=24) continue;
@@ -683,14 +688,14 @@ DAYNAMES.forEach((nm,i)=>{const b=document.createElement("div");b.className="day
   b.textContent=nm.slice(0,3).replace("Á","A").replace("É","E");b.title=nm;
   b.onclick=()=>{b.classList.toggle("on");refreshCapAvail();};cDias.appendChild(b);});
 function selectedDays(){return [...document.querySelectorAll("#cDias .daybox.on")].map(x=>+x.dataset.d).sort((a,b)=>a-b);}
-// Horas ocupadas para un sitio+slot en el rango [a,b] respetando los días marcados
-function occSetFor(sitio,slot,a,b,days){
-  const occ=new Set(); if(!sitio||slot==null||!a||!b||b<a) return occ;
+// Horas ocupadas para un sitio+slot en el rango [a,b] respetando los días marcados (exclKey excluye una pauta)
+function occSetFor(sitio,slot,a,b,days,exclKey){
+  const occ=new Set(); if(!sitio||slot==null||slot===""||!a||!b||b<a) return occ;
   const d=new Date(a); let guard=0;
   while(d<=b && guard++<400){
     const wd=(d.getDay()+6)%7;
     if(!days.length || days.includes(wd)){
-      const o=occupiedHours(sitio,slot,new Date(d));
+      const o=occupiedHours(sitio,slot,new Date(d),exclKey?{exclKey}:{});
       Object.keys(o).forEach(h=>occ.add(+h));
     }
     d.setDate(d.getDate()+1);
@@ -706,6 +711,7 @@ function refreshSlotLabels(){
   const sitio=document.getElementById("cSitio").value;
   const a=parseDate(document.getElementById("cIni").value),b=parseDate(document.getElementById("cFin").value),days=selectedDays();
   [...document.getElementById("cSlot").options].forEach(o=>{
+    if(o.value===""){return;} // opción "— elige slot —"
     const s=+o.value; let label="Slot "+s;
     if(sitio&&a&&b){const n=occSetFor(sitio,s,a,b,days).size;
       label += n===0?" · libre":(n>=24?" · LLENO":` · ${24-n}h libres`); o.disabled=(n>=24);}
@@ -755,9 +761,11 @@ document.getElementById("cClear").onclick=()=>document.querySelectorAll("#cHrs .
 function updateCaptureSlots(){
   const sitio=document.getElementById("cSitio").value;
   const showExtra=document.getElementById("cShowExtra").checked;
-  const cSlot=document.getElementById("cSlot");cSlot.innerHTML="";
+  const cSlot=document.getElementById("cSlot");const prev=cSlot.value;cSlot.innerHTML="";
+  const empty=document.createElement("option");empty.value="";empty.textContent="— elige slot —";cSlot.appendChild(empty);
   (sitio?slotsForSite(sitio):[...Array(12).keys()].map(i=>i+1)).filter(s=>showExtra||s<=8).forEach(s=>{
     const o=document.createElement("option");o.value=s;o.textContent="Slot "+s;cSlot.appendChild(o);});
+  cSlot.value = [...cSlot.options].some(o=>o.value===prev)? prev : "";
   refreshCapAvail();
 }
 document.getElementById("cSitio").addEventListener("change",updateCaptureSlots);
@@ -767,25 +775,30 @@ document.getElementById("cIni").addEventListener("change",()=>{autoMarkDays();re
 document.getElementById("cFin").addEventListener("change",()=>{autoMarkDays();refreshCapAvail();});
 document.getElementById("cAdd").onclick=()=>{
   const camp=document.getElementById("cCamp").value.trim();
+  const sitio=document.getElementById("cSitio").value, slotV=document.getElementById("cSlot").value;
+  const neg=document.getElementById("cNeg").value, est=document.getElementById("cEst").value;
   const horas=[...document.querySelectorAll("#cHrs .hrbox.on")].map(x=>+x.dataset.h).sort((a,b)=>a-b);
   const ini=document.getElementById("cIni").value, fin=document.getElementById("cFin").value;
-  const msg=document.getElementById("cMsg");
+  const msg=document.getElementById("cMsg"); msg.style.color="var(--busy2)";
   if(!camp){msg.textContent="⚠ Falta la campaña.";return;}
+  if(!sitio){msg.textContent="⚠ Elige un sitio.";return;}
+  if(!slotV){msg.textContent="⚠ Elige un slot.";return;}
+  if(!neg){msg.textContent="⚠ Elige el tipo de negociación.";return;}
+  if(!est){msg.textContent="⚠ Elige el estatus.";return;}
   if(!ini||!fin){msg.textContent="⚠ Faltan fechas.";return;}
   if(!horas.length){msg.textContent="⚠ Marca al menos una franja horaria.";return;}
   // respaldo: no permitir horas que ya estén ocupadas en el periodo (evita sobrescribir)
   const ocup=capOccupiedHours();
   const choque=horas.filter(h=>ocup.has(h));
-  if(choque.length){msg.style.color="var(--busy2)";
-    msg.textContent=`⛔ Esas horas ya están ocupadas: ${choque.map(h=>String(h).padStart(2,"0")+":00").join(", ")}. Quítalas o cambia de slot/sitio.`;return;}
+  if(choque.length){msg.textContent=`⛔ Esas horas ya están ocupadas: ${choque.map(h=>String(h).padStart(2,"0")+":00").join(", ")}. Quítalas o cambia de slot/sitio.`;return;}
   msg.style.color="";
   const days=selectedDays();
   const wd = days.length? days : null;
   const diasTxt = daysLabel(days);
-  const rec={sitio:document.getElementById("cSitio").value,slot:+document.getElementById("cSlot").value,
+  const rec={sitio,slot:+slotV,
     tipoPauta:horas.length===24?"CONVENCIONAL":"POR HORARIO",campana:camp,
-    negociacion:document.getElementById("cNeg").value,fechaInicio:ini,fechaFin:fin,
-    estatus:document.getElementById("cEst").value,diasProyeccion:diasTxt,
+    negociacion:neg,fechaInicio:ini,fechaFin:fin,
+    estatus:est,diasProyeccion:diasTxt,
     horariosTxt:horas.length===24?"24 HRS":hoursToRanges(horas),horas};
   if(wd)rec.weekdays=wd;
   rec.id="c"+Date.now()+"_"+Math.floor(Math.random()*1000);
@@ -793,7 +806,7 @@ document.getElementById("cAdd").onclick=()=>{
   if(rec.estatus==="RESERVADA") rec.reservadoEn=new Date().toISOString();
   CAPTURES.push(rec); saveCaptures(); applyData();
   msg.style.color="var(--free2)";
-  msg.textContent=`✓ Agregada al registro: ${camp} en ${rec.sitio} slot ${rec.slot}. Van ${CAPTURES.length}.`;
+  msg.textContent=`✓ Agregada al registro: ${camp} en ${rec.sitio} slot ${rec.slot}. Registradas ${CAPTURES.length}.`;
   document.getElementById("cCamp").value="";
   document.querySelectorAll("#cHrs .hrbox.on").forEach(x=>x.classList.remove("on"));
   refreshCapAvail();
@@ -806,18 +819,13 @@ document.getElementById("cSave").onclick=()=>{
   }
 };
 
-// ----- Contador de reserva (3 días hábiles) -----
+// ----- Contador de reserva (72 horas corridas) -----
 let APP_READY=false;
-const RES_DIAS_HABILES=3;
-function addBusinessDays(date,n){
-  const d=new Date(date); let added=0;
-  while(added<n){ d.setDate(d.getDate()+1); const wd=d.getDay(); if(wd!==0&&wd!==6) added++; }
-  return d;
-}
+const RES_HORAS=72;
 function reservaInfo(rec){
   if(rec.estatus!=="RESERVADA"||!rec.reservadoEn) return null;
   const start=new Date(rec.reservadoEn);
-  const deadline=addBusinessDays(start,RES_DIAS_HABILES);
+  const deadline=new Date(start.getTime()+RES_HORAS*3600000);
   const ms=deadline-new Date();
   return {deadline,ms,expired:ms<=0};
 }
@@ -894,24 +902,43 @@ function renderCapturas(){
   box.querySelectorAll("[data-ref]").forEach(b=>b.onclick=()=>editPauta(b.dataset.ref));
 }
 ["campSearch","campEstFilter","campOnlyCap"].forEach(id=>{const el=document.getElementById(id);if(el)el.addEventListener("input",renderCapturas);});
-document.getElementById("clearCapBtn").onclick=()=>{
-  if(!CAPTURES.length){alert("No tienes capturas propias que borrar.");return;}
-  if(confirm(`¿Borrar tus ${CAPTURES.length} capturas de este navegador? (No afecta el plano base ni los ajustes del plano)`)){
-    CAPTURES=[]; saveCaptures(); applyData();
-  }
-};
 
 // ----- Edición de pautas (pestaña Campañas) -----
 let editingId=null;
 (function buildEditControls(){
   const eHrs=document.getElementById("eHrs");
   HOURS.forEach(h=>{const d=document.createElement("div");d.className="hrbox";d.dataset.h=h;
-    d.textContent=String(h).padStart(2,"0"); d.onclick=()=>d.classList.toggle("on"); eHrs.appendChild(d);});
+    d.textContent=String(h).padStart(2,"0"); d.onclick=()=>{if(d.classList.contains("taken"))return; d.classList.toggle("on");}; eHrs.appendChild(d);});
   const eDias=document.getElementById("eDias");
   DAYNAMES.forEach((nm,i)=>{const b=document.createElement("div");b.className="daybox";b.dataset.d=i;
     b.textContent=nm.slice(0,3).replace("Á","A").replace("É","E");b.title=nm;
-    b.onclick=()=>b.classList.toggle("on"); eDias.appendChild(b);});
+    b.onclick=()=>{b.classList.toggle("on");eRefreshAvail();}; eDias.appendChild(b);});
 })();
+// Cruce de disponibilidad en el editor (excluye la propia pauta que se edita)
+function eRefreshAvail(){
+  if(!editRef)return;
+  const sitio=document.getElementById("eSitio").value, slot=document.getElementById("eSlot").value;
+  const a=parseDate(document.getElementById("eIni").value), b=parseDate(document.getElementById("eFin").value);
+  const days=[...document.querySelectorAll("#eDias .daybox.on")].map(x=>+x.dataset.d);
+  const occ=occSetFor(sitio,slot,a,b,days,editRef.type+":"+editRef.key);
+  document.querySelectorAll("#eHrs .hrbox").forEach(box=>{
+    const h=+box.dataset.h;
+    if(occ.has(h)){box.classList.add("taken");box.classList.remove("on");box.title="Ocupado por otra pauta en ese periodo";}
+    else{box.classList.remove("taken");box.title="";}
+  });
+  const hint=document.getElementById("eAvailHint");
+  if(!sitio||!slot){hint.textContent="";return;}
+  if(occ.size===0){hint.style.color="var(--free2)";hint.textContent=`✓ ${sitio} · slot ${slot}: sin choques con otras pautas en el periodo.`;}
+  else if(occ.size>=24){hint.style.color="var(--busy2)";hint.textContent=`⛔ ${sitio} · slot ${slot}: ocupado 24 h por otras pautas en el periodo.`;}
+  else{hint.style.color="var(--amber)";hint.textContent=`⚠ ${sitio} · slot ${slot}: ${occ.size}h ocupadas por otras pautas (tachadas). Libres: ${24-occ.size}h.`;}
+}
+function eSetEstOptions(type,current){
+  const opts = type==="cap"? ["RESERVADA","CONFIRMADA","DISPONIBLE"] : ["RESERVADA","PAUTADA","DISPONIBLE"];
+  if(current && !opts.includes(current)) opts.push(current);
+  const el=document.getElementById("eEst"); el.innerHTML="";
+  opts.forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;el.appendChild(o);});
+  el.value=current||opts[0];
+}
 function eFillSites(sel){
   const el=document.getElementById("eSitio"); el.innerHTML="";
   DATA.sites.map(s=>s.sitio).sort().forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;el.appendChild(o);});
@@ -923,8 +950,9 @@ function eFillSlots(sel){
   (sitio?slotsForSite(sitio):[...Array(12).keys()].map(i=>i+1)).forEach(s=>{const o=document.createElement("option");o.value=s;o.textContent="Slot "+s;el.appendChild(o);});
   if(sel!=null){ if(![...el.options].some(o=>o.value==sel)){const o=document.createElement("option");o.value=sel;o.textContent="Slot "+sel;el.appendChild(o);} el.value=sel; }
 }
-document.getElementById("eSitio").addEventListener("change",()=>eFillSlots());
-document.getElementById("eAll24").onclick=()=>document.querySelectorAll("#eHrs .hrbox").forEach(x=>x.classList.add("on"));
+document.getElementById("eSitio").addEventListener("change",()=>{eFillSlots();eRefreshAvail();});
+document.getElementById("eSlot").addEventListener("change",eRefreshAvail);
+document.getElementById("eAll24").onclick=()=>document.querySelectorAll("#eHrs .hrbox").forEach(x=>{if(!x.classList.contains("taken"))x.classList.add("on");});
 document.getElementById("eClear").onclick=()=>document.querySelectorAll("#eHrs .hrbox").forEach(x=>x.classList.remove("on"));
 // Mismo auto-marcado de días que en Capturar, para el editor
 function autoMarkDaysEdit(){
@@ -939,12 +967,12 @@ function autoMarkDaysEdit(){
   chips.forEach(c=>c.classList.toggle("on",set.has(+c.dataset.d)));
   hint.textContent=`Rango de ${spanDays} día(s): marqué ${[...set].sort().map(i=>DAYNAMES[i]).join(", ")}. Ajústalo si necesitas.`;
 }
-document.getElementById("eIni").addEventListener("change",autoMarkDaysEdit);
-document.getElementById("eFin").addEventListener("change",autoMarkDaysEdit);
+document.getElementById("eIni").addEventListener("change",()=>{autoMarkDaysEdit();eRefreshAvail();});
+document.getElementById("eFin").addEventListener("change",()=>{autoMarkDaysEdit();eRefreshAvail();});
 document.getElementById("eEst").addEventListener("change",()=>{
   const est=document.getElementById("eEst").value;
   document.getElementById("eMsg").style.color="var(--muted)";
-  document.getElementById("eMsg").textContent = est==="RESERVADA"?"Al guardar como RESERVADA, arranca el contador de 3 días hábiles.":"";
+  document.getElementById("eMsg").textContent = est==="RESERVADA"?"Al guardar como RESERVADA, arranca el contador de 72 horas.":"";
 });
 let editRef=null; // {type:'cap'|'base', key}
 function editPauta(ref){
@@ -956,7 +984,7 @@ function editPauta(ref){
   document.getElementById("eCamp").value=rec.campana||"";
   document.getElementById("eNeg").value=rec.negociacion||"VENTA";
   eFillSites(rec.sitio); eFillSlots(rec.slot);
-  document.getElementById("eEst").value=rec.estatus||"RESERVADA";
+  eSetEstOptions(type, rec.estatus);
   document.getElementById("eIni").value=rec.fechaInicio||"";
   document.getElementById("eFin").value=rec.fechaFin||"";
   const wd=rec.weekdays||[];
@@ -966,7 +994,9 @@ function editPauta(ref){
   document.getElementById("eDiasHint").textContent="";
   document.getElementById("eMsg").textContent="";
   const card=document.getElementById("editCard");
-  card.classList.remove("hidden"); card.scrollIntoView({behavior:"smooth",block:"start"});
+  card.classList.remove("hidden");
+  eRefreshAvail();
+  card.scrollIntoView({behavior:"smooth",block:"start"});
 }
 document.getElementById("eCancel").onclick=()=>{editRef=null;document.getElementById("editCard").classList.add("hidden");};
 document.getElementById("eSave").onclick=()=>{
@@ -978,6 +1008,10 @@ document.getElementById("eSave").onclick=()=>{
   if(!ini||!fin){msg.style.color="var(--busy2)";msg.textContent="⚠ Faltan fechas.";return;}
   if(!horas.length){msg.style.color="var(--busy2)";msg.textContent="⚠ Marca al menos una franja horaria.";return;}
   const days=[...document.querySelectorAll("#eDias .daybox.on")].map(x=>+x.dataset.d).sort((a,b)=>a-b);
+  // respaldo: no permitir choques con OTRAS pautas (excluye la que se edita)
+  const ocupE=occSetFor(document.getElementById("eSitio").value,document.getElementById("eSlot").value,parseDate(ini),parseDate(fin),days,editRef.type+":"+editRef.key);
+  const choqueE=horas.filter(h=>ocupE.has(h));
+  if(choqueE.length){msg.style.color="var(--busy2)";msg.textContent=`⛔ Chocan con otra pauta: ${choqueE.map(h=>String(h).padStart(2,"0")+":00").join(", ")}. Quítalas o cambia de slot/sitio.`;return;}
   const newEst=document.getElementById("eEst").value;
   const fields={campana:camp,negociacion:document.getElementById("eNeg").value,
     sitio:document.getElementById("eSitio").value,slot:+document.getElementById("eSlot").value,
