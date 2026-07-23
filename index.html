@@ -145,6 +145,7 @@
   <div class="tab active" data-tab="matriz">Matriz de disponibilidad</div>
   <div class="tab" data-tab="resumen">Resumen para comercial</div>
   <div class="tab" data-tab="analisis">Análisis</div>
+  <div class="tab" data-tab="ocup">Ocupación</div>
   <div class="tab" data-tab="capturar">Capturar pauta</div>
   <div class="tab" data-tab="campanas">Campañas</div>
   <div class="tab" data-tab="datos">Datos cargados</div>
@@ -208,6 +209,20 @@
       <h3 style="margin-top:16px">Pautas por estatus</h3><div id="aEst"></div></div>
   </div>
   <div class="card"><h3>Pautas activas por mes</h3><div id="aMonth"></div></div>
+</div>
+
+<!-- ===== OCUPACIÓN ===== -->
+<div class="wrap tabpane hidden" id="pane-ocup">
+  <div class="toolbar">
+    <button id="ocupMensualBtn">Mensual</button>
+    <button class="ghost" id="ocupHorarioBtn">Por banda horaria</button>
+    <div style="flex:1"></div>
+    <button class="ghost" id="ocupExportBtn">💾 Exportar ocupación (Excel · 2 hojas)</button>
+  </div>
+  <p class="muted small" id="ocupInfo" style="margin:0 0 12px"></p>
+  <div class="kpis" id="ocupKpis"></div>
+  <div class="matrix-scroll" style="max-height:70vh"><table id="ocupTable"></table></div>
+  <p class="muted small" style="margin-top:10px">Capacidad = 8 slots × horas × días (estándar). La ocupación cuenta también slots 9–12 si existen, por eso una columna puede pasar de 100%. Se calcula del plano que tengas seleccionado arriba.</p>
 </div>
 
 <!-- ===== CAPTURAR ===== -->
@@ -438,6 +453,7 @@ document.querySelectorAll(".tab").forEach(t=>t.onclick=()=>{
   document.querySelectorAll(".tabpane").forEach(p=>p.classList.add("hidden"));
   document.getElementById("pane-"+t.dataset.tab).classList.remove("hidden");
   if(t.dataset.tab==="campanas"){ checkExpiries(); renderCapturas(); }
+  if(t.dataset.tab==="ocup"){ renderOcup(); }
 });
 
 function uniq(key){return [...new Set(DATA.records.map(r=>r[key]).filter(Boolean))].sort();}
@@ -539,6 +555,135 @@ function renderAnalisis(){
   bars("aEst",Object.entries(estCnt).sort((a,b)=>b[1]-a[1]).map(([k,v])=>({k,v})),"");
   // Pautas activas por mes (ordenado cronológico)
   bars("aMonth",Object.entries(monthCnt).sort((a,b)=>a[0]<b[0]?-1:1).map(([k,v])=>({k:mesLabel(k),v})),"");
+}
+// =============================================
+
+// ================= OCUPACIÓN =================
+const SPOT=22.5, SLOTS_BASE=8;
+function bandsDef(){
+  const rng=(a,b)=>{const o=[];for(let h=a;h<b;h++)o.push(h);return o;};
+  return [
+    {key:"b1",label:"00:00-06:59",hours:rng(0,7)},
+    {key:"b2",label:"07:00-10:59",hours:rng(7,11)},
+    {key:"b3",label:"11:00-16:59",hours:rng(11,17)},
+    {key:"b4",label:"17:00-22:59",hours:rng(17,23)},
+    {key:"b5",label:"23:00-23:59",hours:[23]},
+    {key:"p14",label:"14 HRS (07-21)",hours:rng(7,21)},
+    {key:"p16",label:"16 HRS (07-23)",hours:rng(7,23)},
+    {key:"p20",label:"20 HRS (05-01)",hours:[...rng(5,24),0]},
+    {key:"p24",label:"24 HRS",hours:rng(0,24)}
+  ];
+}
+let _ocupCache=null;
+function computeOcup(){
+  const mes=DATA.mes||fmt(today()).slice(0,7);
+  const [yy,mm]=mes.split("-").map(Number);
+  const days=new Date(yy,mm,0).getDate();
+  // índice de records por sitio|slot
+  const idx={};
+  DATA.records.forEach(r=>{const k=r.sitio+"|"+r.slot;(idx[k]=idx[k]||[]).push(r);});
+  const sitesArr=DATA.sites.slice().sort((a,b)=>a.sitio<b.sitio?-1:1);
+  const rows=[];
+  for(const s of sitesArr){
+    const maxSlot=Math.max(s.maxSlot||SLOTS_BASE,SLOTS_BASE);
+    // horaOcc[h], horaVenta[h], horaBonif[h], horaInterc[h] = suma sobre slots y días
+    const hOcc=Array(24).fill(0),hV=Array(24).fill(0),hB=Array(24).fill(0),hI=Array(24).fill(0);
+    for(let slot=1;slot<=maxSlot;slot++){
+      const list=idx[s.sitio+"|"+slot]; if(!list||!list.length)continue;
+      for(let dd=1;dd<=days;dd++){
+        const date=new Date(yy,mm-1,dd);
+        const act=list.filter(r=>recActiveOn(r,date));
+        if(!act.length)continue;
+        for(let h=0;h<24;h++){
+          let neg=null;
+          for(const r of act){ if((r.horas||[]).includes(h)){ const g=(r.negociacion||"").toUpperCase(); if(g==="VENTA"){neg="VENTA";break;} if(!neg)neg=g; } }
+          if(neg){ hOcc[h]++; if(neg==="VENTA")hV[h]++; else if(neg.indexOf("BONIF")===0)hB[h]++; else if(neg.indexOf("INTERC")===0)hI[h]++; }
+        }
+      }
+    }
+    const sum=(arr,hrs)=>hrs.reduce((a,h)=>a+arr[h],0);
+    const allH=[...Array(24).keys()];
+    const capUnits=SLOTS_BASE*24*days*SPOT;
+    const mkBlock=hrs=>{
+      const disp=SLOTS_BASE*hrs.length*days*SPOT;
+      const oc=sum(hOcc,hrs)*SPOT, ve=sum(hV,hrs)*SPOT, bo=sum(hB,hrs)*SPOT, it=sum(hI,hrs)*SPOT;
+      return {disp,oc,ve,bo,it,pOc:disp?oc/disp:0,pVe:disp?ve/disp:0,pBo:disp?bo/disp:0,pIt:disp?it/disp:0};
+    };
+    const mensual=mkBlock(allH);
+    const bands={}; bandsDef().forEach(b=>bands[b.key]=mkBlock(b.hours));
+    rows.push({sitio:s.sitio,direccion:s.direccion||"",estatus:"ACTIVA",mensual,bands});
+  }
+  _ocupCache={mes,days,rows};
+  return _ocupCache;
+}
+let ocupView="mensual";
+function pct(x){return (x*100).toFixed(1)+"%";}
+function pcolor(p){return p>=0.8?"var(--busy2)":p>=0.5?"var(--amber)":"var(--free2)";}
+function renderOcup(){
+  const data=computeOcup();
+  document.getElementById("ocupInfo").textContent=`Plano ${planoLabel({mes:data.mes})} · ${data.rows.length} columnas · ${data.days} días · capacidad 8 slots.`;
+  document.getElementById("ocupMensualBtn").className=ocupView==="mensual"?"":"ghost";
+  document.getElementById("ocupHorarioBtn").className=ocupView==="horario"?"":"ghost";
+  // KPIs: promedios
+  const n=data.rows.length||1;
+  const avg=k=>data.rows.reduce((a,r)=>a+r.mensual[k],0)/n;
+  document.getElementById("ocupKpis").innerHTML=
+    kpi(pct(avg("pOc")),"Ocupación promedio","amber")+
+    kpi(pct(avg("pVe")),"Venta promedio","green")+
+    kpi(pct(avg("pBo")),"Bonificación prom.","blue")+
+    kpi(data.rows.length,"Columnas","blue");
+  const t=document.getElementById("ocupTable");
+  if(ocupView==="mensual"){
+    let h=`<thead><tr><th class="stickL">Columna</th><th style="padding:6px">%Ocupación</th><th style="padding:6px">%Venta</th><th style="padding:6px">%Bonif.</th><th style="padding:6px">%Interc.</th><th style="padding:6px">Ocupados</th><th style="padding:6px">Disponibles</th></tr></thead><tbody>`;
+    data.rows.slice().sort((a,b)=>b.mensual.pOc-a.mensual.pOc).forEach(r=>{
+      const m=r.mensual;
+      h+=`<tr><td class="stickL slotcell">${esc(r.sitio)}</td>`+
+         `<td style="padding:6px 8px;font-weight:700;color:${pcolor(m.pOc)}">${pct(m.pOc)}</td>`+
+         `<td style="padding:6px 8px">${pct(m.pVe)}</td><td style="padding:6px 8px">${pct(m.pBo)}</td><td style="padding:6px 8px">${pct(m.pIt)}</td>`+
+         `<td style="padding:6px 8px">${Math.round(m.oc).toLocaleString()}</td><td style="padding:6px 8px">${Math.round(m.disp).toLocaleString()}</td></tr>`;
+    });
+    t.innerHTML=h+"</tbody>";
+  } else {
+    const bd=bandsDef();
+    let h=`<thead><tr><th class="stickL">Columna</th>`+bd.map(b=>`<th style="padding:6px">${b.label}</th>`).join("")+`</tr></thead><tbody>`;
+    data.rows.slice().sort((a,b)=>b.mensual.pOc-a.mensual.pOc).forEach(r=>{
+      h+=`<tr><td class="stickL slotcell">${esc(r.sitio)}</td>`+
+        bd.map(b=>{const p=r.bands[b.key].pOc;return `<td style="padding:6px 8px;color:${pcolor(p)};font-weight:600">${pct(p)}</td>`;}).join("")+`</tr>`;
+    });
+    t.innerHTML=h+"</tbody>";
+  }
+}
+document.getElementById("ocupMensualBtn").onclick=()=>{ocupView="mensual";renderOcup();};
+document.getElementById("ocupHorarioBtn").onclick=()=>{ocupView="horario";renderOcup();};
+document.getElementById("ocupExportBtn").onclick=()=>exportOcupExcel();
+function exportOcupExcel(){
+  const data=computeOcup(); const mesLbl=planoLabel({mes:data.mes});
+  // Hoja 1: mensual
+  const h1=data.rows.map(r=>({
+    "Mes":mesLbl,"Columna":r.sitio,"Dirección":r.direccion,"Estatus":r.estatus,
+    "Total Slots Disponibles":Math.round(r.mensual.disp),"Total Slots Ocupados":Math.round(r.mensual.oc),
+    "%OCUPACIÓN TOTAL":+r.mensual.pOc.toFixed(4),
+    "VENTA":Math.round(r.mensual.ve),"%VENTA":+r.mensual.pVe.toFixed(4),
+    "BONIFICACIÓN":Math.round(r.mensual.bo),"%BONIFICACIÓN":+r.mensual.pBo.toFixed(4),
+    "INTERCAMBIO":Math.round(r.mensual.it),"%INTERCAMBIO":+r.mensual.pIt.toFixed(4)
+  }));
+  // Hoja 2: por banda horaria
+  const bd=bandsDef();
+  const h2=data.rows.map(r=>{
+    const o={"Mes":mesLbl,"Columna":r.sitio,"Dirección":r.direccion,"Estatus":r.estatus};
+    bd.forEach(b=>{const x=r.bands[b.key];
+      o[`Disp ${b.label}`]=Math.round(x.disp);
+      o[`Ocup ${b.label}`]=Math.round(x.oc);
+      o[`%Ocup ${b.label}`]=+x.pOc.toFixed(4);
+      o[`Venta ${b.label}`]=Math.round(x.ve);
+      o[`%Venta ${b.label}`]=+x.pVe.toFixed(4);
+    });
+    return o;
+  });
+  const wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(h1),"OCUPACIÓN MENSUAL");
+  XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(h2),"HORARIO X COLUMNA");
+  XLSX.writeFile(wb,`Ocupacion_ViaVerde_${data.mes}.xlsx`);
 }
 // =============================================
 
